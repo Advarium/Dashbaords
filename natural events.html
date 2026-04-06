@@ -227,7 +227,7 @@
     .adb-panel.flyable          { cursor: pointer; }
     .adb-panel.flyable:hover    { background: var(--surface2); }
 
-    /* ── Alert Detail Bar ───────────────────────��───── */
+    /* ── Alert Detail Bar ───────────────────────  ───── */
     #alert-detail-bar {
       height: var(--alertbar-h);
       background: var(--surface);
@@ -2648,9 +2648,12 @@ async function loadEonet() {
 
 function renderEonet() {
   const catFilter = document.getElementById('eonet-cat').value;
+  const eonetCutoff48 = Date.now() - 48 * 3_600_000;
   const filtered  = eonetData.filter(ev => {
-    if (catFilter === 'all') return true;
-    return ev.categories?.some(c => c.id === catFilter);
+    if (catFilter !== 'all' && !ev.categories?.some(c => c.id === catFilter)) return false;
+    const geo = ev.geometry?.[ev.geometry.length - 1];
+    const t   = geo?.date ? new Date(geo.date).getTime() : 0;
+    return t >= eonetCutoff48;
   });
 
   document.getElementById('eonet-count').textContent = filtered.length;
@@ -2696,10 +2699,14 @@ function plotEonet() {
   eonetLayer.clearLayers();
   const catFilter = document.getElementById('eonet-cat').value;
 
+  const eonetMapCutoff = Date.now() - 48 * 3_600_000;
+
   for (const ev of eonetData) {
     if (catFilter !== 'all' && !ev.categories?.some(c => c.id === catFilter)) continue;
     const geo = ev.geometry?.[ev.geometry.length - 1];
     if (!geo?.coordinates) continue;
+    const geoT = geo.date ? new Date(geo.date).getTime() : 0;
+    if (!geoT || geoT < eonetMapCutoff) continue;
 
     const [lon, lat] = geo.coordinates;
     const cat   = eonetCatInfo(ev);
