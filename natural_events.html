@@ -1299,6 +1299,11 @@
           <summary><span>🏜️ Drought &amp; Hydrology</span><span class="mls-chevron">▾</span></summary>
           <div class="mls-content">
             <label class="layer-toggle">
+              <input type="checkbox" id="toggle-gauge" checked onchange="toggleLayer('gauge')">
+              <span class="layer-dot" style="background:#e69875"></span>
+              River Gauges (NWPS)
+            </label>
+            <label class="layer-toggle">
               <input type="checkbox" id="toggle-drought" onchange="toggleLayer('drought')">
               <span class="layer-dot" style="background:#dbbc7f;border-radius:2px"></span>
               US Drought Monitor
@@ -1442,6 +1447,18 @@
             <div class="mls-swatch-row"><span class="mls-swatch" style="background:#859289"></span> 💨 Dust / Haze</div>
             <div class="mls-swatch-row"><span class="mls-swatch" style="background:#dbbc7f"></span> 🏜️ Drought</div>
             <div class="mls-swatch-row"><span class="mls-swatch" style="background:#d3c6aa"></span> ❄️ Snow</div>
+          </div>
+        </details>
+
+        <!-- River Gauges -->
+        <details class="mls-section" open>
+          <summary><span>💧 River Gauges</span><span class="mls-chevron">▾</span></summary>
+          <div class="mls-content">
+            <div class="mls-desc">NOAA NWPS observed river gauge stages. Only gauges currently at or above Action Stage are shown. Dots are solid to distinguish from dashed EONET rings.</div>
+            <div class="mls-swatch-row"><span class="mls-swatch" style="background:#dbbc7f"></span> Action Stage — River rising, monitor conditions</div>
+            <div class="mls-swatch-row"><span class="mls-swatch" style="background:#e69875"></span> Minor Flooding — Low-lying areas affected</div>
+            <div class="mls-swatch-row"><span class="mls-swatch" style="background:#e67e80"></span> Moderate Flooding — Some inundation of structures</div>
+            <div class="mls-swatch-row"><span class="mls-swatch" style="background:#d699b6"></span> Major Flooding — Extensive inundation</div>
           </div>
         </details>
 
@@ -1882,7 +1899,7 @@ function relTime(ms) {
 /* ══════════════════════════════════════════════════════
    MAP  —  Leaflet + CartoDB Dark Matter
 ══════════════════════════════════════════════════════ */
-let map, eqLayer, easLayer, eonetLayer, droughtLayer, lsrLayer, radarLayer, rainviewerLayer, imergLayer, goesWLayer, goesELayer, meteosatLayer, himawariLayer, graceLayer, smapRootLayer, smapSurfLayer;
+let map, eqLayer, easLayer, eonetLayer, droughtLayer, lsrLayer, gaugeLayer, radarLayer, rainviewerLayer, imergLayer, goesWLayer, goesELayer, meteosatLayer, himawariLayer, graceLayer, smapRootLayer, smapSurfLayer;
 
 function initMap() {
   map = L.map('map', {
@@ -1986,6 +2003,7 @@ function initMap() {
   // Drought starts hidden (toggle is off by default); others start visible
   droughtLayer = L.layerGroup();          // NOT added to map yet
   lsrLayer     = L.layerGroup().addTo(map);
+  gaugeLayer   = L.layerGroup().addTo(map);
   easLayer     = L.layerGroup().addTo(map);
   eonetLayer   = L.layerGroup().addTo(map);
   eqLayer      = L.layerGroup().addTo(map);
@@ -2112,7 +2130,7 @@ function toggleLayer(which) {
     updateMapCount();
     return;
   }
-  const layers = { eq: eqLayer, eas: easLayer, eonet: eonetLayer, drought: droughtLayer, radar: radarLayer, imerg: imergLayer, goesw: goesWLayer, goese: goesELayer, grace: graceLayer, 'smap-root': smapRootLayer, 'smap-surf': smapSurfLayer };
+  const layers = { eq: eqLayer, eas: easLayer, eonet: eonetLayer, drought: droughtLayer, gauge: gaugeLayer, radar: radarLayer, imerg: imergLayer, goesw: goesWLayer, goese: goesELayer, grace: graceLayer, 'smap-root': smapRootLayer, 'smap-surf': smapSurfLayer };
   const el = document.getElementById(`toggle-${which}`);
   if (el && layers[which]) {
     el.checked ? map.addLayer(layers[which]) : map.removeLayer(layers[which]);
@@ -2904,6 +2922,81 @@ function plotLSR() {
 }
 
 /* ══════════════════════════════════════════════════════
+   RIVER GAUGES — NOAA NWPS via ArcGIS MapServer
+══════════════════════════════════════════════════════ */
+let gaugeData = [];
+
+const GAUGE_STATUS = {
+  action:   { color: '#dbbc7f', label: 'Action Stage'    },
+  flood:    { color: '#e69875', label: 'Minor Flooding'  },
+  moderate: { color: '#e67e80', label: 'Moderate Flood'  },
+  major:    { color: '#d699b6', label: 'Major Flood'     },
+};
+
+async function loadGauges() {
+  try {
+    const params = new URLSearchParams({
+      where: "status IN ('action','flood','moderate','major')",
+      outFields: 'gaugelid,status,location,waterbody,state,observed,units,flood,moderate,major,action,obstime,latitude,longitude,url',
+      returnGeometry: 'false',
+      resultRecordCount: 2000,
+      f: 'json'
+    });
+    const r = await fetch(
+      `https://mapservices.weather.noaa.gov/eventdriven/rest/services/water/riv_gauges/MapServer/0/query?${params}`,
+      { signal: AbortSignal.timeout(15000) }
+    );
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    gaugeData = (j.features || []).map(f => f.attributes);
+    plotGauges();
+  } catch(e) {
+    console.warn('River gauge load failed:', e.message);
+  }
+}
+
+function plotGauges() {
+  if (!map) return;
+  gaugeLayer.clearLayers();
+  for (const g of gaugeData) {
+    const lat = parseFloat(g.latitude), lon = parseFloat(g.longitude);
+    if (isNaN(lat) || isNaN(lon)) continue;
+    const st = GAUGE_STATUS[g.status];
+    if (!st) continue;
+    const obs = parseFloat(g.observed);
+    const marker = L.marker([lat, lon], {
+      icon: L.divIcon({
+        html: `<div style="width:10px;height:10px;background:${st.color};border:1.5px solid #1a2227;box-sizing:border-box"></div>`,
+        className: 'leaflet-marker-emoji',
+        iconSize: [10, 10],
+        iconAnchor: [5, 5],
+        popupAnchor: [0, -8]
+      })
+    });
+    const location = esc(g.location || g.gaugelid);
+    const waterbody = g.waterbody ? `<div style="color:var(--muted);font-size:11px;margin-top:2px">${esc(g.waterbody)}, ${esc(g.state)}</div>` : `<div style="color:var(--muted);font-size:11px;margin-top:2px">${esc(g.state)}</div>`;
+    const thresholds = [
+      g.action   ? `<tr><td>Action</td><td>${g.action} ${g.units}</td></tr>` : '',
+      g.flood    ? `<tr><td>Minor</td><td>${g.flood} ${g.units}</td></tr>` : '',
+      g.moderate ? `<tr><td>Moderate</td><td>${g.moderate} ${g.units}</td></tr>` : '',
+      g.major    ? `<tr><td>Major</td><td>${g.major} ${g.units}</td></tr>` : '',
+    ].filter(Boolean).join('');
+    marker.bindPopup(`<div class="popup-inner">
+      <div class="popup-title">💧 ${location}</div>
+      ${waterbody}
+      <div class="popup-row" style="margin-top:6px">
+        <span style="background:${st.color};color:#1a2227;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700">${st.label}</span>
+        <span style="margin-left:6px"><b>${isNaN(obs) ? esc(g.observed) : obs.toFixed(2)}</b> ${esc(g.units || 'ft')}</span>
+      </div>
+      ${thresholds ? `<table style="margin-top:6px;font-size:11px;color:var(--muted);width:100%;border-collapse:collapse"><tbody>${thresholds}</tbody></table>` : ''}
+      <div class="popup-row" style="margin-top:4px">${g.obstime ? g.obstime.slice(0, 16) + ' UTC' : ''}</div>
+      ${g.url ? `<div class="popup-row"><a href="${esc(g.url)}" target="_blank" style="color:var(--accent)">View on water.noaa.gov ↗</a></div>` : ''}
+    </div>`);
+    marker.addTo(gaugeLayer);
+  }
+}
+
+/* ══════════════════════════════════════════════════════
    US DROUGHT MONITOR — droughtmonitor.unl.edu
 ══════════════════════════════════════════════════════ */
 let droughtData = null;
@@ -3492,6 +3585,7 @@ function refreshAll() {
   loadFema();
   loadDrought();
   loadLSR();
+  loadGauges();
   loadRainviewer();
   loadRealEarth();
 }
@@ -3510,6 +3604,7 @@ setInterval(loadEonet,        300_000);
 setInterval(loadFema,         600_000);  // FEMA declarations change slowly
 setInterval(loadDrought,      600_000);  // Drought monitor updates weekly
 setInterval(loadLSR,          300_000);  // SPC storm reports — 5 min refresh
+setInterval(loadGauges,       300_000);  // NWPS river gauges — 5 min refresh
 setInterval(loadRainviewer,   300_000);  // RainViewer refreshes frames ~every 5 min
 setInterval(loadRealEarth,  1_800_000); // RealEarth (Meteosat/Himawari) update ~hourly
 setInterval(buildTicker,     60_000);   // Re-evaluate 1-hour window every minute
