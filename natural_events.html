@@ -3339,8 +3339,22 @@ function initMap() {
     zoom: 2,
     minZoom: 2,
     zoomControl: false,
-    attributionControl: true
+    attributionControl: true,
+    maxBounds: [[-85, -180], [85, 180]],
+    maxBoundsViscosity: 1.0,
   });
+
+  // Prevent world-repeat: keep minZoom high enough that the map always fills
+  // the container with exactly one world copy, recalculated on resize.
+  function _updateMinZoom() {
+    const W = map.getContainer().offsetWidth;
+    const H = map.getContainer().offsetHeight;
+    const minZ = Math.ceil(Math.log2(Math.max(W, H) / 256));
+    map.setMinZoom(Math.max(minZ, 1));
+    if (map.getZoom() < map.getMinZoom()) map.setZoom(map.getMinZoom());
+  }
+  _updateMinZoom();
+  map.on('resize', _updateMinZoom);
 
   // Basemap layers — swappable via header toggle
   baseDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -3576,6 +3590,15 @@ function updateMapCount() {
   document.getElementById('map-count').textContent = n;
 }
 
+// Ensure a map layer is visible before flying to it
+function ensureLayerOn(which) {
+  const cb = document.getElementById(`toggle-${which}`);
+  if (cb && !cb.checked) {
+    cb.checked = true;
+    toggleLayer(which);
+  }
+}
+
 function toggleLayer(which) {
   if (!map) return;
   // Dynamic layers (created async) — handle via shared lookup
@@ -3704,6 +3727,7 @@ function highlightEqRow(id) {
 
 // Pan map to earthquake when row is clicked
 function flyToEq(id) {
+  ensureLayerOn('eq');
   const f = eqData.find(x => x.id === id);
   if (!f?.geometry?.coordinates) return;
   const [lon, lat] = f.geometry.coordinates;
@@ -3721,6 +3745,7 @@ function flyToEq(id) {
 
 // Pan map to EONET event when sidebar row is clicked
 function flyToEonet(id) {
+  ensureLayerOn('eonet');
   const ev = eonetData.find(x => x.id === id);
   if (!ev) return;
   const geo = ev.geometry?.[ev.geometry.length - 1];
@@ -3747,6 +3772,7 @@ async function _fetchZoneGeom(url) {
 
 // Pan map to NWS alert when sidebar row is clicked
 async function flyToAlert(id) {
+  ensureLayerOn('eas');
   const a = easData.find(x => x.id === id);
   if (!a) return;
 
@@ -4506,6 +4532,7 @@ function plotMSC() {
 }
 
 function flyToMSC(identifier) {
+  ensureLayerOn('msc');
   if (!map || !identifier) return;
   // mscLayer contains one L.geoJSON group; individual polygon layers are one level deeper
   mscLayer.eachLayer(group => {
@@ -4627,6 +4654,7 @@ function plotVolcanism() {
 }
 
 function flyToVolc(id, lat, lon) {
+  ensureLayerOn('volc');
   if (!map || lat == null || lon == null) return;
   map.flyTo([lat, lon], Math.max(map.getZoom(), 5), { duration: 1 });
   volcLayer.eachLayer(m => { if (m._volcId === id) m.openPopup(); });
@@ -4881,6 +4909,7 @@ async function plotBOM() {
 }
 
 function flyToBOM(state) {
+  ensureLayerOn('bom');
   if (!map || !state) return;
   const center = AUS_STATE_CENTER[state.toUpperCase().trim()];
   if (center) map.flyTo(center, Math.max(map.getZoom(), 5), { duration: 1 });
@@ -5714,6 +5743,7 @@ function plotGDACS() {
 }
 
 function flyToGDACS(guid) {
+  ensureLayerOn('gdacs');
   const d = gdacsData.find(x => x.guid === guid);
   if (!d || d.lat == null || d.lon == null || !map) return;
   map.flyTo([d.lat, d.lon], Math.max(map.getZoom(), 5), { duration: 1 });
@@ -6346,6 +6376,7 @@ function _meteoPopup(d) {
 }
 
 function flyToMeteo(id) {
+  ensureLayerOn('meteoalarm');
   const d = meteoalarmData.find(x => x.id === id);
   if (!d || !map) return;
   // Try to fly to polygon bounds first, then fall back to centroid
@@ -6548,6 +6579,7 @@ function plotWMO() {
 }
 
 function flyToWMO(id) {
+  ensureLayerOn('wmo');
   const d = wmoData.find(x => x.id === id);
   if (!d || !map) return;
   if (d.centLat != null && d.centLon != null) {
